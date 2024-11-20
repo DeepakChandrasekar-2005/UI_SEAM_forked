@@ -1,6 +1,7 @@
 import os
 import gdown
 import numpy as np
+import tensorflow as tf
 from scipy.spatial import distance
 from tensorflow.keras.preprocessing import image
 from tensorflow.keras.models import Model
@@ -55,41 +56,15 @@ def load_model(
     model.load_weights(weights_path)
     return model
 
-# Load and preprocess image
-def preprocess_image(img_path, target_size=(55, 47)):
-    img = image.load_img(img_path, target_size=target_size)
-    img_array = image.img_to_array(img)
-    img_array = np.expand_dims(img_array, axis=0) / 255.0  # Normalize
-    return img_array
-
-# Compare embeddings and determine if faces are the same
-def compare_faces(embedding1, embedding2, threshold=0.6):
-    embedding1 = embedding1.flatten()  # Ensure 1-D vector
-    embedding2 = embedding2.flatten()  # Ensure 1-D vector
-
-    euclidean_dist = distance.euclidean(embedding1, embedding2)
-    print(f"Euclidean Distance between images: {euclidean_dist}")
-    if euclidean_dist < threshold:
-        print("The images are of the same person.")
-    else:
-        print("The images are of different people.")
 
 # Main script
 if __name__ == "__main__":
     # Load the model
     model = load_model()
+
+    tf.keras.backend.clear_session()
+
     print("Model loaded successfully.")
 
     # Load and preprocess images
-    img1_path = '/project/workspace/public/dataset/person2/3.jpg'  # Replace with actual paths
-    img2_path = '/project/workspace/public/dataset/person2/3.jpg'  # Replace with actual paths
-
-    img1_array = preprocess_image(img1_path)
-    img2_array = preprocess_image(img2_path)
-
-    # Predict embeddings
-    embedding1 = model.predict(img1_array)
-    embedding2 = model.predict(img2_array)
-
-    # Compare embeddings
-    compare_faces(embedding1, embedding2)
+    model.save('deepid.h5')

@@ -1,75 +1,95 @@
-import tensorflow as tf
-from tensorflow.keras.applications import EfficientNetB0
-from tensorflow.keras import models
-from tensorflow.keras.layers import GlobalAveragePooling2D,Dense,Dropout
-
-import numpy as np
-from sklearn.model_selection import train_test_split
-import cv2
 import os
+import gdown
+import numpy as np
+from scipy.spatial import distance
+from tensorflow.keras.preprocessing import image
+from tensorflow.keras.models import Model
+from tensorflow.keras.layers import (
+    Conv2D,
+    Activation,
+    Input,
+    Add,
+    MaxPooling2D,
+    Flatten,
+    Dense,
+    Dropout,
+)
 
-# Load and preprocess the dataset
-def load_dataset(data_path, img_size=(224, 224)):
-    images = []
-    labels = []
-    label_map = {}
-    label_counter = 0
+# Define the DeepID model construction function
+def load_model(
+    url="https://github.com/serengil/deepface_models/releases/download/v1.0/deepid_keras_weights.h5",
+) -> Model:
+    myInput = Input(shape=(55, 47, 3))
 
-    # Create label map
-    for dirpath, dirnames, filenames in os.walk(data_path):
-        for dirname in dirnames:
-            label_map[dirname] = label_counter
-            label_counter += 1
-        break
+    x = Conv2D(20, (4, 4), name="Conv1", activation="relu", input_shape=(55, 47, 3))(myInput)
+    x = MaxPooling2D(pool_size=2, strides=2, name="Pool1")(x)
+    x = Dropout(rate=0.99, name="D1")(x)
 
-    # Load images and assign labels
-    for label in label_map.keys():
-        folder_path = os.path.join(data_path, label)
-        for img_name in os.listdir(folder_path):
-            img_path = os.path.join(folder_path, img_name)
-            img = cv2.imread(img_path)
-            img = cv2.resize(img, img_size)
-            # Normalize images to [-1, 1]
-            img = (img / 255.0 - 0.5) * 2  
-            images.append(img)
-            labels.append(label_map[label])
+    x = Conv2D(40, (3, 3), name="Conv2", activation="relu")(x)
+    x = MaxPooling2D(pool_size=2, strides=2, name="Pool2")(x)
+    x = Dropout(rate=0.99, name="D2")(x)
 
-    images = np.array(images)
-    labels = np.array(labels)
-    return images, labels, label_map
+    x = Conv2D(60, (3, 3), name="Conv3", activation="relu")(x)
+    x = MaxPooling2D(pool_size=2, strides=2, name="Pool3")(x)
+    x = Dropout(rate=0.99, name="D3")(x)
 
-# Load data
-data_path = '/project/workspace/public/dataset'  # Replace with the correct dataset path
-X, y, label_map = load_dataset(data_path)
+    x1 = Flatten()(x)
+    fc11 = Dense(160, name="fc11")(x1)
 
-# Split into training and validation sets
-X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42)
+    x2 = Conv2D(80, (2, 2), name="Conv4", activation="relu")(x)
+    x2 = Flatten()(x2)
+    fc12 = Dense(160, name="fc12")(x2)
 
-# Model creation
-base_model = EfficientNetB0(weights='imagenet', include_top=False, input_shape=(224, 224, 3))
-base_model.trainable = False  # Freeze the base model
+    y = Add()([fc11, fc12])
+    y = Activation("relu", name="deepid")(y)
 
-model = models.Sequential([
-    base_model,
-    GlobalAveragePooling2D(),
-    Dense(256, activation='relu'),
-    Dropout(0.5),
-    Dense(len(label_map), activation='softmax')
-])
+    model = Model(inputs=[myInput], outputs=y)
 
-# Compile the model
-model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+    # Download weights if not present
+    weights_path = os.path.expanduser("~/.deepface/weights/deepid_keras_weights.h5")
+    if not os.path.isfile(weights_path):
+        print("Downloading model weights...")
+        os.makedirs(os.path.dirname(weights_path), exist_ok=True)
+        gdown.download(url, weights_path, quiet=False)
 
-# Train the model
-history = model.fit(X_train, y_train, validation_data=(X_val, y_val), epochs=10, batch_size=32)
+    model.load_weights(weights_path)
+    return model
 
-# Save as TFLite model
-model.save('efficientnetb0_face_recognition.h5')
+# Load and preprocess image
+def preprocess_image(img_path, target_size=(55, 47)):
+    img = image.load_img(img_path, target_size=target_size)
+    img_array = image.img_to_array(img)
+    img_array = np.expand_dims(img_array, axis=0) / 255.0  # Normalize
+    return img_array
 
-# Convert to TFLite
-converter = tf.lite.TFLiteConverter.from_keras_model(models.load_model('efficientnetb0_face_recognition.h5'))
-tflite_model = converter.convert()
-with open('efficientnetb0_face_recognition.tflite', 'wb') as f:
-    f.write(tflite_model)
+# Compare embeddings and determine if faces are the same
+def compare_faces(embedding1, embedding2, threshold=0.6):
+    embedding1 = embedding1.flatten()  # Ensure 1-D vector
+    embedding2 = embedding2.flatten()  # Ensure 1-D vector
 
-print("Model training and conversion to TFLite complete.")
+    euclidean_dist = distance.euclidean(embedding1, embedding2)
+    print(f"Euclidean Distance between images: {euclidean_dist}")
+    if euclidean_dist < threshold:
+        print("The images are of the same person.")
+    else:
+        print("The images are of different people.")
+
+# Main script
+if __name__ == "__main__":
+    # Load the model
+    model = load_model()
+    print("Model loaded successfully.")
+
+    # Load and preprocess images
+    img1_path = '/project/workspace/public/dataset/person2/3.jpg'  # Replace with actual paths
+    img2_path = '/project/workspace/public/dataset/person2/3.jpg'  # Replace with actual paths
+
+    img1_array = preprocess_image(img1_path)
+    img2_array = preprocess_image(img2_path)
+
+    # Predict embeddings
+    embedding1 = model.predict(img1_array)
+    embedding2 = model.predict(img2_array)
+
+    # Compare embeddings
+    compare_faces(embedding1, embedding2)
